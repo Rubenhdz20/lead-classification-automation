@@ -18,13 +18,27 @@ const anthropic = new Anthropic({
 
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
-const CSV_FILE_PATH = './sample_leads.csv'; //
+const CSV_FILE_PATH = './sample_leads.csv';
+
+const CONCURRENCY = 5; // Max parallel AI classification requests
+
+// CONCURRENCY HELPER
+
+async function runWithConcurrency(items, concurrency, fn) {
+  const results = [];
+  for (let i = 0; i < items.length; i += concurrency) {
+    const batch = items.slice(i, i + concurrency);
+    const batchResults = await Promise.all(batch.map(fn));
+    results.push(...batchResults);
+  }
+  return results;
+}
 
 // CSV READER MODULE
 
 function readCSV(filePath) {
   console.log('\n📂 Reading CSV file...');
-  
+
   try {
     const fileContent = fs.readFileSync(filePath, 'utf-8');
     const records = parse(fileContent, {
@@ -32,7 +46,7 @@ function readCSV(filePath) {
       skip_empty_lines: true,
       trim: true
     });
-    
+
     console.log(`✅ Successfully read ${records.length} leads from CSV`);
     return records;
   } catch (error) {
@@ -41,33 +55,48 @@ function readCSV(filePath) {
   }
 }
 
-// DUPLICATE CHECKER MODULE
+// BATCH DUPLICATE CHECKER MODULE
 
-async function isDuplicate(email) {
+async function filterDuplicates(leads) {
+  console.log('\n🔍 Checking for duplicates...');
+
   try {
+    const emails = leads.map(lead => lead['Email']);
     const { data, error } = await supabase
       .from('leads')
       .select('email')
-      .eq('email', email)
-      .single();
-    
-    if (error && error.code !== 'PGRST116') {
-      // PGRST116 = no rows found (not an error for us)
-      console.error('Error checking duplicate:', error.message);
-      return false;
+      .in('email', emails);
+
+    if (error) {
+      console.error('Error checking duplicates:', error.message);
+      return { newLeads: leads, duplicateCount: 0 };
     }
-    
-    return data !== null;
+
+    const existingEmails = new Set(data.map(row => row.email));
+    const newLeads = [];
+    let duplicateCount = 0;
+
+    for (const lead of leads) {
+      if (existingEmails.has(lead['Email'])) {
+        console.log(`⏭️  SKIPPED - ${lead['First Name']} ${lead['Last Name']} (already in database)`);
+        duplicateCount++;
+      } else {
+        newLeads.push(lead);
+      }
+    }
+
+    console.log(`✅ Found ${duplicateCount} duplicates, ${newLeads.length} new leads to process`);
+    return { newLeads, duplicateCount };
   } catch (error) {
     console.error('Error in duplicate check:', error.message);
-    return false;
+    return { newLeads: leads, duplicateCount: 0 };
   }
 }
 
-// STEP 2.3: LLM CLASSIFICATION MODULE
+// LLM CLASSIFICATION MODULE
 
 async function classifyLead(lead) {
-  const prompt = `You are a lead classification expert for a beverage supply company. 
+  const prompt = `You are a lead classification expert for a beverage supply company.
 
 Classify this lead into EXACTLY ONE persona based on their job title and company context.
 
@@ -82,7 +111,7 @@ Classification Rules:
 - Persona 3: Purchasing directors, purchasing managers, or anyone who works on managing purchases, sourcing, and procurement (Purchasing Manager/Director, Procurement Manager, Supply Chain Manager, Vendor Relations Manager)
 - Persona 4: Anyone who works at the company but has no direct purchasing power and is not involved in beverage operations (Marketing, HR, Accounting, IT, Admin, Front Desk, Events)
 
-IMPORTANT: 
+IMPORTANT:
 - Respond with ONLY the persona number: "Persona 1", "Persona 2", "Persona 3", or "Persona 4"
 - Do not include any explanation or additional text
 - If a title includes both ownership and beverage operations (e.g., "General Manager & Owner"), classify as Persona 1 (ownership takes priority)`;
@@ -95,128 +124,108 @@ IMPORTANT:
         { role: 'user', content: prompt }
       ],
     });
-    
+
     const classification = message.content[0].text.trim();
-    
+
     // Validate the response
     if (!classification.match(/Persona [1-4]/)) {
-      console.warn(`⚠️  Unexpected classification format: "${classification}". Defaulting to Persona 4.`);
+      console.warn(`⚠️  Unexpected classification for ${lead['First Name']} ${lead['Last Name']}: "${classification}". Defaulting to Persona 4.`);
       return 'Persona 4';
     }
-    
+
     return classification;
   } catch (error) {
-    console.error('❌ Error classifying lead:', error.message);
+    console.error(`❌ Error classifying ${lead['First Name']} ${lead['Last Name']}:`, error.message);
     return 'Persona 4'; // Default to Persona 4 on error
   }
 }
 
-// STEP 2.4: DATABASE WRITER MODULE
+// PARALLEL CLASSIFICATION MODULE
 
-async function addLeadToDatabase(lead, persona) {
+async function classifyLeads(leads) {
+  console.log(`\n🤖 Classifying ${leads.length} leads with Claude AI (concurrency: ${CONCURRENCY})...`);
+
+  const classified = await runWithConcurrency(leads, CONCURRENCY, async (lead) => {
+    const persona = await classifyLead(lead);
+    console.log(`   ✅ ${lead['First Name']} ${lead['Last Name']} (${lead['Job Title']}) → ${persona}`);
+    return { lead, persona };
+  });
+
+  console.log(`✅ All ${classified.length} leads classified`);
+  return classified;
+}
+
+// BATCH DATABASE WRITER MODULE
+
+async function addLeadsToDatabase(classifiedLeads) {
+  console.log(`\n💾 Inserting ${classifiedLeads.length} leads into database...`);
+
+  const rows = classifiedLeads.map(({ lead, persona }) => ({
+    first_name: lead['First Name'],
+    last_name: lead['Last Name'],
+    job_title: lead['Job Title'],
+    company: lead['Company'],
+    email: lead['Email'],
+    phone: lead['Phone'],
+    persona: persona,
+    lead_status: 'Not Contacted'
+  }));
+
   try {
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('leads')
-      .insert([
-        {
-          first_name: lead['First Name'],
-          last_name: lead['Last Name'],
-          job_title: lead['Job Title'],
-          company: lead['Company'],
-          email: lead['Email'],
-          phone: lead['Phone'],
-          persona: persona,
-          lead_status: 'Not Contacted'
-        }
-      ])
-      .select();
-    
+      .insert(rows);
+
     if (error) {
-      console.error('❌ Database error:', error.message);
-      return false;
+      console.error('❌ Database batch insert error:', error.message);
+      return { success: false, count: 0 };
     }
-    
-    return true;
+
+    console.log(`✅ Inserted ${rows.length} leads into database`);
+    return { success: true, count: rows.length };
   } catch (error) {
     console.error('❌ Error adding to database:', error.message);
-    return false;
+    return { success: false, count: 0 };
   }
 }
 
-// STEP 2.5: WEBHOOK SENDER MODULE
+// PARALLEL WEBHOOK SENDER MODULE
 
-async function sendToWebhook(lead, persona) {
-  try {
-    const payload = {
-      first_name: lead['First Name'],
-      last_name: lead['Last Name'],
-      job_title: lead['Job Title'],
-      company: lead['Company'],
-      email: lead['Email'],
-      phone: lead['Phone'],
-      persona: persona,
-      processed_at: new Date().toISOString()
-    };
-    
-    const response = await axios.post(WEBHOOK_URL, payload);
-    
-    if (response.status === 200 || response.status === 201) {
-      return true;
-    } else {
-      console.warn(`⚠️  Webhook returned status: ${response.status}`);
-      return false;
+async function sendLeadsToWebhook(classifiedLeads) {
+  console.log(`\n📤 Sending ${classifiedLeads.length} leads to webhook (concurrency: ${CONCURRENCY})...`);
+
+  let successCount = 0;
+  let failCount = 0;
+
+  await runWithConcurrency(classifiedLeads, CONCURRENCY, async ({ lead, persona }) => {
+    try {
+      const payload = {
+        first_name: lead['First Name'],
+        last_name: lead['Last Name'],
+        job_title: lead['Job Title'],
+        company: lead['Company'],
+        email: lead['Email'],
+        phone: lead['Phone'],
+        persona: persona,
+        processed_at: new Date().toISOString()
+      };
+
+      const response = await axios.post(WEBHOOK_URL, payload);
+
+      if (response.status === 200 || response.status === 201) {
+        successCount++;
+      } else {
+        console.warn(`⚠️  Webhook returned status ${response.status} for ${lead['Email']}`);
+        failCount++;
+      }
+    } catch (error) {
+      console.error(`❌ Webhook error for ${lead['Email']}:`, error.message);
+      failCount++;
     }
-  } catch (error) {
-    console.error('❌ Webhook error:', error.message);
-    return false;
-  }
-}
+  });
 
-// MAIN AUTOMATION FLOW
-
-async function processLead(lead, index, total) {
-  const leadName = `${lead['First Name']} ${lead['Last Name']}`;
-  console.log(`\n[${index + 1}/${total}] Processing: ${leadName} (${lead['Job Title']})`);
-  
-  // Check for duplicates
-  const duplicate = await isDuplicate(lead['Email']);
-  
-  if (duplicate) {
-    console.log(`⏭️  SKIPPED - Already exists in database`);
-    return { status: 'skipped', reason: 'duplicate' };
-  }
-  
-  // Classify with AI
-  console.log('🤖 Classifying with Claude AI...');
-  const persona = await classifyLead(lead);
-  console.log(`✅ Classified as: ${persona}`);
-  
-  // Step 2.4: Add to database
-  console.log('💾 Adding to database...');
-  const dbSuccess = await addLeadToDatabase(lead, persona);
-  
-  if (!dbSuccess) {
-    console.log('❌ Failed to add to database');
-    return { status: 'failed', reason: 'database_error' };
-  }
-  
-  console.log('✅ Added to database');
-  
-  // Step 2.5: Send to webhook
-  console.log('📤 Sending to webhook...');
-  const webhookSuccess = await sendToWebhook(lead, persona);
-  
-  if (webhookSuccess) {
-    console.log('✅ Sent to webhook');
-  } else {
-    console.log('⚠️  Webhook failed (but lead is in database)');
-  }
-  
-  return { 
-    status: 'success', 
-    persona: persona,
-    webhookSuccess: webhookSuccess 
-  };
+  console.log(`✅ Webhook: ${successCount} sent, ${failCount} failed`);
+  return { successCount, failCount };
 }
 
 // MAIN FUNCTION
@@ -225,62 +234,61 @@ async function main() {
   console.log('\n' + '='.repeat(60));
   console.log('🚀 LEAD CLASSIFICATION AUTOMATION');
   console.log('='.repeat(60));
-  
+
+  const startTime = Date.now();
+
   try {
-    // Read CSV
+    // Step 1: Read CSV
     const leads = readCSV(CSV_FILE_PATH);
-    
+
     console.log('\n' + '='.repeat(60));
     console.log('📊 PROCESSING LEADS');
     console.log('='.repeat(60));
-    
-    const results = {
-      total: leads.length,
-      processed: 0,
-      skipped: 0,
-      failed: 0,
-      byPersona: {
-        'Persona 1': 0,
-        'Persona 2': 0,
-        'Persona 3': 0,
-        'Persona 4': 0
-      }
-    };
-    
-    // Process each lead
-    for (let i = 0; i < leads.length; i++) {
-      const result = await processLead(leads[i], i, leads.length);
-      
-      if (result.status === 'skipped') {
-        results.skipped++;
-      } else if (result.status === 'failed') {
-        results.failed++;
-      } else if (result.status === 'success') {
-        results.processed++;
-        results.byPersona[result.persona]++;
-      }
-      
-      // Small delay to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Step 2: Batch duplicate check (1 query instead of N)
+    const { newLeads, duplicateCount } = await filterDuplicates(leads);
+
+    if (newLeads.length === 0) {
+      console.log('\n⏭️  All leads are duplicates. Nothing to process.');
+      return;
     }
-    
+
+    // Step 3: Parallel AI classification
+    const classifiedLeads = await classifyLeads(newLeads);
+
+    // Step 4: Batch database insert (1 query instead of N)
+    const dbResult = await addLeadsToDatabase(classifiedLeads);
+
+    // Step 5: Parallel webhook sends
+    const webhookResult = await sendLeadsToWebhook(classifiedLeads);
+
+    // Build persona counts
+    const byPersona = { 'Persona 1': 0, 'Persona 2': 0, 'Persona 3': 0, 'Persona 4': 0 };
+    for (const { persona } of classifiedLeads) {
+      byPersona[persona]++;
+    }
+
     // Display summary
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
     console.log('\n' + '='.repeat(60));
     console.log('📈 AUTOMATION COMPLETE - SUMMARY');
     console.log('='.repeat(60));
-    console.log(`\n📊 Total leads in CSV: ${results.total}`);
-    console.log(`✅ Successfully processed: ${results.processed}`);
-    console.log(`⏭️  Skipped (duplicates): ${results.skipped}`);
-    console.log(`❌ Failed: ${results.failed}`);
-    
+    console.log(`\n📊 Total leads in CSV: ${leads.length}`);
+    console.log(`✅ Successfully processed: ${dbResult.count}`);
+    console.log(`⏭️  Skipped (duplicates): ${duplicateCount}`);
+    console.log(`❌ Failed DB inserts: ${dbResult.success ? 0 : newLeads.length}`);
+    console.log(`📤 Webhook: ${webhookResult.successCount} sent, ${webhookResult.failCount} failed`);
+
     console.log('\n📋 Classification Breakdown:');
-    console.log(`   Persona 1 (Owners): ${results.byPersona['Persona 1']}`);
-    console.log(`   Persona 2 (Beverage Ops): ${results.byPersona['Persona 2']}`);
-    console.log(`   Persona 3 (Procurement): ${results.byPersona['Persona 3']}`);
-    console.log(`   Persona 4 (Other Staff): ${results.byPersona['Persona 4']}`);
-    
-    console.log('\n✅ Automation finished successfully!\n');
-    
+    console.log(`   Persona 1 (Owners): ${byPersona['Persona 1']}`);
+    console.log(`   Persona 2 (Beverage Ops): ${byPersona['Persona 2']}`);
+    console.log(`   Persona 3 (Procurement): ${byPersona['Persona 3']}`);
+    console.log(`   Persona 4 (Other Staff): ${byPersona['Persona 4']}`);
+
+    console.log(`\n⏱️  Completed in ${elapsed}s`);
+    console.log('✅ Automation finished successfully!\n');
+
   } catch (error) {
     console.error('\n❌ FATAL ERROR:', error.message);
     console.error(error);
