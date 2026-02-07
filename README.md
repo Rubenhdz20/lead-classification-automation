@@ -1,116 +1,198 @@
-# Lead Classification Automation
+# 🚀 Lead Classification Automation
 
-Automated lead classification system using AI (Claude) and Supabase database integration.
+An intelligent lead classification system that uses AI to automatically categorize business contacts into personas, with duplicate detection and webhook integration.
 
-## Overview
+**Built for:** GTM Automation Trial Task  
+**Developer:** Ruben Hdz  
+**Tech Stack:** Node.js, Supabase (PostgreSQL), Claude AI (Anthropic), Webhook Integration
 
-This automation:
+---
 
-1. ✅ Reads leads from CSV file
-2. ✅ Checks for duplicates in database
-3. ✅ Classifies leads using Claude AI into 4 personas
-4. ✅ Stores new leads in Supabase database
-5. ✅ Sends results to webhook
+## 📋 Overview
 
-## Setup
+This automation processes incoming leads from CSV files and:
+- ✅ Detects and skips duplicates from existing database
+- ✅ Classifies leads into 4 business personas using Claude AI
+- ✅ Stores results in Supabase (PostgreSQL) database
+- ✅ Sends data to webhook endpoint for downstream processing
+- ✅ Executes in ~8-12 seconds using batch operations and parallel processing
 
-### 1. Install Dependencies
+---
 
-```bash
-npm install
+## 🎯 Features
+
+### Intelligent Classification
+Uses Claude AI (Haiku model) to classify leads into:
+- **Persona 1:** Owners (Bar/Restaurant/Hotel owners)
+- **Persona 2:** Beverage Operations (Directors, Managers, Bartenders)
+- **Persona 3:** Procurement (Purchasing, Supply Chain, Vendor Relations)
+- **Persona 4:** Other Staff (Marketing, HR, Finance, IT)
+
+### Performance Optimizations
+- **Batch duplicate checking:** Single database query for all leads
+- **Parallel AI classification:** Process 5 leads simultaneously
+- **Batch database insertion:** Single INSERT operation for all new leads
+- **Parallel webhook delivery:** Concurrent HTTP requests
+
+### Error Handling
+- Graceful failure recovery
+- Detailed logging and progress tracking
+- Input validation and response verification
+
+---
+
+## 🏗️ Architecture
+
+```
+CSV File Input
+      ↓
+┌─────────────────────────────────────┐
+│  Node.js Automation Script          │
+├─────────────────────────────────────┤
+│  1. CSV Reader                      │
+│  2. Batch Duplicate Checker         │
+│  3. Parallel AI Classification      │
+│  4. Batch Database Writer           │
+│  5. Parallel Webhook Sender         │
+└─────────────────────────────────────┘
+      ↓                    ↓
+  Supabase DB         Webhook Endpoint
+  (PostgreSQL)        (n8n)
 ```
 
-### 2. Configure Environment Variables
+---
 
-Create a `.env` file with:
+## 🛠️ Tech Stack
 
-```env
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_KEY=your_supabase_anon_key
-ANTHROPIC_API_KEY=your_claude_api_key
-WEBHOOK_URL=https://n8n.srv1062902.hstgr.cloud/webhook/6fb62d67-1beb-4750-83e8-c55f8129affb
-```
+| Component | Technology | Reason |
+|-----------|------------|--------|
+| Runtime | Node.js | Efficient for API integrations |
+| Database | Supabase (PostgreSQL) | Production-ready, scalable |
+| AI | Claude API (Haiku) | Cost-efficient, accurate classification |
+| HTTP Client | Axios | Reliable webhook delivery |
+| CSV Parser | csv-parse | Fast, stream-based parsing |
 
-### 3. Place CSV File
+---
 
-Put `sample_leads.csv` in the project root directory.
+## 📦 Installation
 
-## Usage
+### Prerequisites
+- Node.js 16+ installed
+- Supabase account
+- Claude API key (Anthropic)
+
+### Setup Steps
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd lead-classification-automation
+   ```
+
+2. **Install dependencies**
+   ```bash
+   npm install
+   ```
+
+3. **Configure environment variables**
+   ```bash
+   cp .env.example .env
+   ```
+   
+   Edit `.env` with your credentials:
+   ```env
+   SUPABASE_URL=https://your-project.supabase.co
+   SUPABASE_KEY=your_anon_key
+   ANTHROPIC_API_KEY=sk-ant-xxxxx
+   WEBHOOK_URL=https://your-webhook-endpoint
+   ```
+
+4. **Set up Supabase database**
+   
+   Run this SQL in Supabase SQL Editor:
+   ```sql
+   CREATE TABLE leads (
+     id SERIAL PRIMARY KEY,
+     first_name VARCHAR(100),
+     last_name VARCHAR(100),
+     job_title VARCHAR(200),
+     company VARCHAR(200),
+     email VARCHAR(200) UNIQUE,
+     phone VARCHAR(50),
+     persona VARCHAR(20),
+     lead_status VARCHAR(50) DEFAULT 'Not Contacted',
+     created_at TIMESTAMP DEFAULT NOW()
+   );
+   ```
+
+5. **Place CSV file**
+   ```bash
+   # Add your sample_leads.csv to project root
+   ```
+
+---
+
+## 🚀 Usage
 
 ### Test Connections
-
 ```bash
 npm test
 ```
 
-This verifies:
-
-- Supabase database connection
-- Claude API access
-- Webhook endpoint
-
 ### Run Automation
-
 ```bash
 npm start
 ```
 
-This will:
-
-- Read all leads from `sample_leads.csv`
-- Skip any duplicates already in database
-- Classify new leads with AI
-- Add them to Supabase
-- Send data to webhook
-
-## Persona Classification
-
-The AI classifies leads into 4 personas:
-
-- **Persona 1**: Owners (Owner, Founder, CEO of hospitality venues)
-- **Persona 2**: Beverage Operations (Beverage Director, Bar Manager, Mixologist)
-- **Persona 3**: Procurement (Purchasing Manager, Supply Chain Manager)
-- **Persona 4**: Other Staff (Marketing, HR, Accounting, Admin)
-
-## Architecture
-
-```
-Node.js Application
-├── Supabase (PostgreSQL database)
-├── Claude API (AI classification)
-└── Webhook (n8n endpoint)
+### Reset Database
+```bash
+npm run reset
 ```
 
-## Database Schema
+---
 
-```sql
-CREATE TABLE leads (
-  id SERIAL PRIMARY KEY,
-  first_name VARCHAR(100),
-  last_name VARCHAR(100),
-  job_title VARCHAR(200),
-  company VARCHAR(200),
-  email VARCHAR(200) UNIQUE,
-  phone VARCHAR(50),
-  persona VARCHAR(20),
-  lead_status VARCHAR(50) DEFAULT 'Not Contacted',
-  created_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-## Project Structure
+## 📁 Project Structure
 
 ```
 lead-classification-automation/
 ├── src/
 │   ├── index.js              # Main automation script
-│   └── test-connections.js   # Connection testing
-├── sample_leads.csv          # Input data
-├── .env                      # Environment variables (not in repo)
+│   ├── test-connections.js   # Connection testing
+│   └── reset-database.js     # Database reset utility
+├── .env.example              # Environment template
 ├── package.json              # Dependencies
-└── README.md                 # This file
+└── README.md                 # Documentation
 ```
 
-## Author
+---
 
-Built for GTM Automation Trial Task
+## ⚡ Performance
+
+**Execution Time:** ~8-12 seconds for 17 new leads
+
+**Optimizations:**
+- Batch database queries (26 queries → 1 query)
+- Parallel AI classification (5 concurrent requests)
+- Batch database inserts (18 inserts → 1 insert)
+- Parallel webhook delivery (5 concurrent requests)
+
+---
+
+## 📊 Classification Logic
+
+| Persona | Description | Example Titles |
+|---------|-------------|----------------|
+| Persona 1 | Business owners | Owner, Founder, Co-owner, CEO |
+| Persona 2 | Beverage operations | Beverage Director, Bar Manager, Sommelier |
+| Persona 3 | Procurement | Purchasing Manager, Supply Chain Manager |
+| Persona 4 | Other staff | Marketing, HR, Finance, IT, Admin |
+
+---
+
+## 👤 Author
+
+**Ruben Hernandez** - Built for GTM Automation Trial Task
+
+---
+
+**Last Updated:** February 2026

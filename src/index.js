@@ -238,14 +238,14 @@ async function main() {
   const startTime = Date.now();
 
   try {
-    // Step 1: Read CSV
+    // Read CSV
     const leads = readCSV(CSV_FILE_PATH);
 
     console.log('\n' + '='.repeat(60));
     console.log('📊 PROCESSING LEADS');
     console.log('='.repeat(60));
 
-    // Step 2: Batch duplicate check (1 query instead of N)
+    // Batch duplicate check (1 query instead of N)
     const { newLeads, duplicateCount } = await filterDuplicates(leads);
 
     if (newLeads.length === 0) {
@@ -253,13 +253,13 @@ async function main() {
       return;
     }
 
-    // Step 3: Parallel AI classification
+    // Parallel AI classification
     const classifiedLeads = await classifyLeads(newLeads);
 
-    // Step 4: Batch database insert (1 query instead of N)
+    // Batch database insert (1 query instead of N)
     const dbResult = await addLeadsToDatabase(classifiedLeads);
 
-    // Step 5: Parallel webhook sends
+    // Parallel webhook sends
     const webhookResult = await sendLeadsToWebhook(classifiedLeads);
 
     // Build persona counts
