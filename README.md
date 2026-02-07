@@ -189,10 +189,20 @@ lead-classification-automation/
 
 ---
 
+## 🚀 Future Enhancements
+
+Potential improvements for production deployment:
+
+- **TypeScript Migration**: Add type safety and better IDE support for team collaboration
+- **Unit Testing**: Implement Jest for automated testing of core functions
+- **Retry Logic**: Add exponential backoff for webhook calls to handle network failures
+- **Monitoring**: Integrate logging and alerting for production observability
+- **Containerization**: Create Docker image for consistent deployment across environments
+
+---
+
 ## 👤 Author
 
 **Ruben Hernandez** - Built for GTM Automation Trial Task
 
 ---
-
-**Last Updated:** February 2026
