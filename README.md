@@ -158,7 +158,6 @@ lead-classification-automation/
 ├── src/
 │   ├── index.js              # Main automation script
 │   ├── test-connections.js   # Connection testing
-│   └── reset-database.js     # Database reset utility
 ├── .env.example              # Environment template
 ├── package.json              # Dependencies
 └── README.md                 # Documentation
