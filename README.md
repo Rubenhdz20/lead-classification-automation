@@ -198,9 +198,3 @@ Potential improvements for production deployment:
 - **Containerization**: Create Docker image for consistent deployment across environments
 
 ---
-
-## 👤 Author
-
-**Ruben Hernandez** - Built for GTM Automation Trial Task
-
----
