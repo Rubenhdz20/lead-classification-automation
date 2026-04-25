@@ -1,8 +1,7 @@
 # 🚀 Lead Classification Automation
 
 An intelligent lead classification system that uses AI to automatically categorize business contacts into personas, with duplicate detection and webhook integration.
-
-**Built for:** GTM Automation Trial Task  
+ 
 **Developer:** Ruben Hdz  
 **Tech Stack:** Node.js, Supabase (PostgreSQL), Claude AI (Anthropic), Webhook Integration
 
